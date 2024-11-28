@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "telescope_core",
+    "telescope_app",
+]
