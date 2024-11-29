@@ -4,11 +4,14 @@
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    use telescope_app::config;
+
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
+            // .with_decorations(false)
+            .with_inner_size([800.0, 600.0]) 
             .with_min_inner_size([300.0, 220.0])
             .with_icon(
                 // NOTE: Adding an icon is optional
@@ -18,13 +21,14 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "eframe template",
+        config::BRAND,
         native_options,
-        Box::new(|cc| Ok(Box::new(telescope_app::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(telescope_app::TelescopeApp::new(cc)))),
     )
 }
 
 // When compiling to web using trunk:
+// not used currently
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::wasm_bindgen::JsCast as _;
@@ -50,7 +54,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(telescope_app::TemplateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(telescope_app::TelescopeApp::new(cc)))),
             )
             .await;
 
