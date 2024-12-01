@@ -22,6 +22,12 @@ log = "0.4"
 
 # You only need serde if you want app persistence:
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+
+catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
+
+egui_commonmark = { version = "0.18", default-features = true, features = ["macros"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1.83"
+hudsucker = "0.23.0"
+tokio = { version = "1", features = ["full"] }

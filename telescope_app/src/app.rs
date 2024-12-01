@@ -1,4 +1,14 @@
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
+use egui::Color32;
+use egui_commonmark::{CommonMarkCache, commonmark_str};
+use crate::{config, oobe::OOBEStep};
+
+#[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Hash)]
+pub enum UiState {
+    OOBE(OOBEStep),
+    Proxy,
+}
+
+/// We derive Deserialize/Serialize so we can persist app state on shutdown
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TelescopeApp {
@@ -7,6 +17,10 @@ pub struct TelescopeApp {
 
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+
+    state: UiState,
+    #[serde(skip)]
+    md_cache: CommonMarkCache,
 }
 
 impl Default for TelescopeApp {
@@ -15,6 +29,8 @@ impl Default for TelescopeApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
+            state: UiState::OOBE(OOBEStep::Resume),
+            md_cache: CommonMarkCache::default(),
         }
     }
 }
@@ -33,6 +49,58 @@ impl TelescopeApp {
 
         Default::default()
     }
+
+    pub fn render_oobe(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading(format!("{} Setup", config::BRAND));
+        ui.label("Let's set up your environment!");
+        match &self.state {
+            UiState::OOBE(step) => {
+                match step {
+                    OOBEStep::Resume => {
+                        ui.label("Loading OOBE state...");
+                        ui.style_mut().url_in_tooltip = true;
+                        self.state = UiState::OOBE(OOBEStep::Welcome);
+                    },
+                    OOBEStep::Welcome => {
+                        ui.label(format!("Welcome to {}!", config::BRAND));
+                        if ui.button("Next").clicked() {
+                            self.state = UiState::OOBE(OOBEStep::LicenseAgreement);
+                        }
+                    },
+                    OOBEStep::LicenseAgreement => {
+                        commonmark_str!(ui, &mut self.md_cache, "telescope_app/assets/LICENSE.md"); 
+                        if ui.button("Accept").clicked() {
+                            self.state = UiState::OOBE(OOBEStep::SetupPath);
+                        }
+                    }
+                    _ => {
+                        ui.label(format!("Did not implement step {:?}", step));
+                    }
+                }
+            },
+            _ => {
+
+            }
+        }
+    }
+
+    pub fn catppucin_menu(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.menu_button("Catppucin Themes", |ui| {
+            // TODO: reorder
+            if ui.button("Mocha").clicked() {
+                catppuccin_egui::set_theme(&ctx, catppuccin_egui::MOCHA);
+            }
+            if ui.button("Latte").clicked() {
+                catppuccin_egui::set_theme(&ctx, catppuccin_egui::LATTE);
+            }
+            if ui.button("Frappe").clicked() {
+                catppuccin_egui::set_theme(&ctx, catppuccin_egui::FRAPPE);
+            }
+            if ui.button("Macchiato").clicked() {
+                catppuccin_egui::set_theme(&ctx, catppuccin_egui::MACCHIATO);
+            }
+        });
+    }
 }
 
 impl eframe::App for TelescopeApp {
@@ -48,48 +116,44 @@ impl eframe::App for TelescopeApp {
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
-
-            egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
+            if self.state != UiState::Proxy {
+                egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
+                        self.catppucin_menu(ui, ctx); // TODO: move to diff menu
                     });
                     ui.add_space(16.0);
-                }
-
-                egui::widgets::global_theme_preference_buttons(ui);
-            });
+                    egui::widgets::global_theme_preference_buttons(ui);
+                    ui.add_space(16.0);
+                    ui.colored_label(Color32::from_rgb(255, 0, 0), "Setup mode");
+                });
+            } else {
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        if ui.button("Quit").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        self.catppucin_menu(ui, ctx); // TODO: move to diff menu
+                    });
+                    ui.add_space(16.0);
+                    egui::widgets::global_theme_preference_buttons(ui);
+                });
+            }
+            
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
-
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
+            match &self.state {
+                UiState::OOBE(step) => {
+                    self.render_oobe(ui, ctx);
+                },
+                UiState::Proxy => {
+                    // self.render_proxy(ui, ctx, frame);
+                    ui.heading("TODO: Proxy");
+                }
             }
-
-            ui.separator();
-
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
-                "Source code."
-            ));
-
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
-            });
         });
     }
 }
