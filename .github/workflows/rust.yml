@@ -149,8 +149,10 @@ jobs:
     - name: Nuke bugged gcc version
       if: ${{ contains(matrix.TARGET, 'linux') }}
       run: |
-        sudo apt-get remove -y gcc-9 || echo No gcc 9 to remove
-        sudo apt-get remove -y gcc-10 || echo No gcc 10 to remove
+        sudo apt-get remove gcc-9 || echo No gcc 9 to remove
+        sudo apt-get remove gcc-10 || echo No gcc 10 to remove
+        echo Checking cc version
+        cc --version
 
     - name: Build
       run: |
