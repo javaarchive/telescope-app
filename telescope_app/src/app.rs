@@ -1,6 +1,8 @@
+use std::path::PathBuf;
+
 use egui::Color32;
-use egui_commonmark::{CommonMarkCache, commonmark_str};
-use crate::{config, oobe::OOBEStep};
+use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
+use crate::{config, oobe::OOBEStep, settings};
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Hash)]
 pub enum UiState {
@@ -21,6 +23,8 @@ pub struct TelescopeApp {
     state: UiState,
     #[serde(skip)]
     md_cache: CommonMarkCache,
+    #[serde(skip)]
+    cur_path: PathBuf,
 }
 
 impl Default for TelescopeApp {
@@ -31,6 +35,7 @@ impl Default for TelescopeApp {
             value: 2.7,
             state: UiState::OOBE(OOBEStep::Resume),
             md_cache: CommonMarkCache::default(),
+            cur_path: settings::resolve_user_data_directory()
         }
     }
 }
@@ -58,7 +63,12 @@ impl TelescopeApp {
                 match step {
                     OOBEStep::Resume => {
                         ui.label("Loading OOBE state...");
+                        // some setup stuff
                         ui.style_mut().url_in_tooltip = true;
+                        if let Some(viewport_cmd) = egui::ViewportCommand::center_on_screen(ctx) {
+                            ctx.send_viewport_cmd(viewport_cmd);
+                        }
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                         self.state = UiState::OOBE(OOBEStep::Welcome);
                     },
                     OOBEStep::Welcome => {
@@ -72,7 +82,23 @@ impl TelescopeApp {
                         if ui.button("Accept").clicked() {
                             self.state = UiState::OOBE(OOBEStep::SetupPath);
                         }
-                    }
+                    },
+                    OOBEStep::SetupPath => {
+                        commonmark!(ui, &mut self.md_cache, "## Setup Data Path");
+                        ui.label(format!("Your path is currently set to: {}", self.cur_path.display()));
+                        ui.label("You may wish to change this outside of the program. For example, you can create a portable.ini file to force portable mode to store data in the current directory.");
+                        if ui.button("Exit Now").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if ui.button("Continue").clicked() {
+                            self.state = UiState::OOBE(OOBEStep::SetupCerts);
+                        }
+                    },
+                    OOBEStep::SetupCerts => {
+                        commonmark!(ui, &mut self.md_cache, "## Setup Certificates\nWe'll need to generate a certificate for your browser to trust the certificate. This is a one-time step but you can repeat it anytime.");
+                        
+
+                    },
                     _ => {
                         ui.label(format!("Did not implement step {:?}", step));
                     }
