@@ -145,6 +145,11 @@ jobs:
       if: ${{ !contains(matrix.TARGET, 'linux') }}
       run: |
         cargo install cross
+    
+    - name: Nuke bugged gcc version
+      if: ${{ contains(matrix.TARGET, 'linux') }}
+      run: |
+        sudo apt-get remove gcc-9 || echo No gcc 9 to remove
 
     - name: Build
       run: |
