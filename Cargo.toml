@@ -4,3 +4,11 @@ members = [
     "telescope_core",
     "telescope_app",
 ]
+
+[workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
+pre-build = [
+    "apt remove gcc-9 || echo No gcc 9 to remove",
+    "apt remove gcc-10 || echo No gcc 10 to remove",
+    "echo Checking cc version",
+    "cc --version"
+]
