@@ -8,7 +8,7 @@ members = [
 # work around aws-lc-rs bug
 [workspace.metadata.cross.target.x86_64-unknown-linux-gnu]
 pre-build = [
-    "apt-get remove gcc-9",
-    "apt-get remove gcc-10",
-    "cc --version"
+#    "apt-get remove gcc-9",
+#    "apt-get remove gcc-10",
+#    "cc --version"
 ]
