@@ -10,37 +10,87 @@ pub enum UiState {
     Proxy,
 }
 
+pub enum PaneState {
+    OOBE,
+    Blank
+}
+
+impl Default for PaneState {
+    fn default() -> Self {
+        Self::Blank
+    }
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(default)] 
+pub struct AppState {
+    pub state: UiState,
+    #[serde(skip)]
+    pub md_cache: CommonMarkCache,
+    #[serde(skip)]
+    pub cur_path: PathBuf,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            state: UiState::OOBE(OOBEStep::Resume),
+            cur_path: settings::resolve_user_data_directory(),
+            md_cache: CommonMarkCache::default(),
+        }
+    }
+}
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct TelescopeApp {
-    // Example stuff:
-    label: String,
-
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
-
-    state: UiState,
     #[serde(skip)]
-    md_cache: CommonMarkCache,
+    pub app_state: AppState,
     #[serde(skip)]
-    cur_path: PathBuf,
+    pub tree: egui_tiles::Tree<PaneState>,
+}
+
+impl egui_tiles::Behavior<PaneState> for AppState {
+    fn tab_title_for_pane(&mut self, pane: &PaneState) -> egui::WidgetText {
+        format!("Test").into()
+    }
+
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tile_id: egui_tiles::TileId,
+        pane: &mut PaneState,
+    ) -> egui_tiles::UiResponse {
+        ui.label("OWO");
+        egui_tiles::UiResponse::None
+    }
 }
 
 impl Default for TelescopeApp {
     fn default() -> Self {
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
-            state: UiState::OOBE(OOBEStep::Resume),
-            md_cache: CommonMarkCache::default(),
-            cur_path: settings::resolve_user_data_directory()
+            app_state: AppState::default(), 
+            tree: Self::create_tree()
         }
     }
 }
 
 impl TelescopeApp {
+
+    pub fn create_tree() -> egui_tiles::Tree<PaneState> {
+        let mut tiles = egui_tiles::Tiles::default();
+
+        let mut tabs = vec![];
+        tabs.push({
+            let cells = vec![tiles.insert_pane(PaneState::OOBE)];
+            tiles.insert_grid_tile(cells)
+        });
+        let root = tiles.insert_tab_tile(tabs);
+
+        egui_tiles::Tree::new("app_tree", root, tiles)
+    }
+
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -55,7 +105,7 @@ impl TelescopeApp {
         Default::default()
     }
 
-    pub fn render_oobe(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    /*pub fn render_oobe(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading(format!("{} Setup", config::BRAND));
         ui.label("Let's set up your environment!");
         match &self.state {
@@ -96,8 +146,9 @@ impl TelescopeApp {
                     },
                     OOBEStep::SetupCerts => {
                         commonmark!(ui, &mut self.md_cache, "## Setup Certificates\nWe'll need to generate a certificate for your browser to trust the certificate. This is a one-time step but you can repeat it anytime.");
-                        
-
+                        if ui.button("Continue").clicked() {
+                            
+                        }
                     },
                     _ => {
                         ui.label(format!("Did not implement step {:?}", step));
@@ -108,7 +159,7 @@ impl TelescopeApp {
 
             }
         }
-    }
+    }*/
 
     pub fn catppucin_menu(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("Catppucin Themes", |ui| {
@@ -124,6 +175,11 @@ impl TelescopeApp {
             }
             if ui.button("Macchiato").clicked() {
                 catppuccin_egui::set_theme(&ctx, catppuccin_egui::MACCHIATO);
+            }
+            if ui.button("Test non-catppuccin").clicked() {
+                /*ctx.style_mut(|style| {
+                    
+                });*/
             }
         });
     }
@@ -142,7 +198,7 @@ impl eframe::App for TelescopeApp {
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
-            if self.state != UiState::Proxy {
+            if self.app_state.state != UiState::Proxy {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
@@ -171,15 +227,7 @@ impl eframe::App for TelescopeApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            match &self.state {
-                UiState::OOBE(step) => {
-                    self.render_oobe(ui, ctx);
-                },
-                UiState::Proxy => {
-                    // self.render_proxy(ui, ctx, frame);
-                    ui.heading("TODO: Proxy");
-                }
-            }
+            self.tree.ui(&mut self.app_state, ui);
         });
     }
 }

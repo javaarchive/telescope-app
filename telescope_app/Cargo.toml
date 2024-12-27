@@ -28,6 +28,7 @@ catppuccin-egui = { version = "5.3.1", default-features = false, features = ["eg
 
 egui_commonmark = { version = "0.18", default-features = true, features = ["macros"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+egui_tiles = "0.10.1"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
