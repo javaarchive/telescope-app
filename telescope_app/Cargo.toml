@@ -11,8 +11,8 @@ all-features = true
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [dependencies]
-egui = "0.29"
-eframe = { version = "0.29", default-features = false, features = [
+egui = "0.30"
+eframe = { version = "0.30", default-features = false, features = [
     "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -24,11 +24,14 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 
-catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
+# catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
+# oh wow using random person's github crate until this is fixed upstream
+# thanks!
+catppuccin-egui = { git = "https://github.com/yui-915/catppuccin-egui.git", rev = "6f13c69b65e468776141cd8a9672b597ebf1bc51" }
 
-egui_commonmark = { version = "0.18", default-features = true, features = ["macros"] }
+egui_commonmark = { version = "0.19", default-features = true, features = ["macros"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
-egui_tiles = "0.10.1"
+egui_tiles = "0.11"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -41,6 +41,12 @@ impl Default for AppState {
     }
 }
 
+impl AppState {
+    pub fn ui(&mut self, ui: &mut egui::Ui, pane: &mut PaneState) {
+        // don't show anything for OOBE this is handled by a modal
+    }
+}
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -53,7 +59,10 @@ pub struct TelescopeApp {
 
 impl egui_tiles::Behavior<PaneState> for AppState {
     fn tab_title_for_pane(&mut self, pane: &PaneState) -> egui::WidgetText {
-        format!("Test").into()
+        match pane {
+            PaneState::OOBE => "Out of box experience".into(),
+            PaneState::Blank => "Blank Test Pane".into()
+        }
     }
 
     fn pane_ui(
@@ -62,7 +71,15 @@ impl egui_tiles::Behavior<PaneState> for AppState {
         _tile_id: egui_tiles::TileId,
         pane: &mut PaneState,
     ) -> egui_tiles::UiResponse {
-        ui.label("OWO");
+        let title = self.tab_title_for_pane(pane);
+
+        if ui
+            .add(egui::Button::new(title.text()).sense(egui::Sense::drag()))
+            .drag_started()
+        {
+            return egui_tiles::UiResponse::DragStarted;
+        }
+        self.ui(ui, pane);
         egui_tiles::UiResponse::None
     }
 }
@@ -86,6 +103,7 @@ impl TelescopeApp {
             let cells = vec![tiles.insert_pane(PaneState::OOBE)];
             tiles.insert_grid_tile(cells)
         });
+        tabs.push(tiles.insert_pane(PaneState::Blank));
         let root = tiles.insert_tab_tile(tabs);
 
         egui_tiles::Tree::new("app_tree", root, tiles)
@@ -176,6 +194,7 @@ impl TelescopeApp {
             if ui.button("Macchiato").clicked() {
                 catppuccin_egui::set_theme(&ctx, catppuccin_egui::MACCHIATO);
             }
+            // ui.label("Unavailable while package needs to be updated");
             if ui.button("Test non-catppuccin").clicked() {
                 /*ctx.style_mut(|style| {
                     
@@ -228,6 +247,12 @@ impl eframe::App for TelescopeApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.tree.ui(&mut self.app_state, ui);
+            // modals
+            if matches!(self.app_state.state, UiState::OOBE(_)) {
+                let modal = Modal::new(Id::new("Out of box experience setup")).show(ctx, |ui| {
+                    
+                });
+            }
         });
     }
 }
