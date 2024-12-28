@@ -17,5 +17,23 @@ pub fn resolve_user_data_directory() -> PathBuf {
         return config_dir;
     }
 
+    if current_dir.join("data_dir.txt").exists() {
+        let data_dir = std::fs::read_to_string(current_dir.join("data_dir.txt")).expect("Could not read data_dir.txt");
+        let path_buf = PathBuf::from(data_dir);
+        let create_status = std::fs::create_dir_all(path_buf.clone());
+        if create_status.is_ok() {
+            println!("Created data directory at {}", path_buf.display());
+        }
+        return path_buf;
+    }
+
     current_dir
+}
+
+pub fn persist_new_data_directory(data_dir: PathBuf) {
+    // in the current directory
+    let current_dir = std::env::current_dir().expect("Could not get current directory");
+    // write a new file called data_dir.txt
+    let data_dir_file = current_dir.join("data_dir.txt");
+    std::fs::write(data_dir_file, data_dir.to_str().unwrap()).expect("Could not write data_dir.txt");
 }

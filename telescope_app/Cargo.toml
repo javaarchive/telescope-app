@@ -25,9 +25,9 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 
 # catppuccin-egui = { version = "5.3.1", default-features = false, features = ["egui29"] }
-# oh wow using random person's github crate until this is fixed upstream
-# thanks!
-catppuccin-egui = { git = "https://github.com/yui-915/catppuccin-egui.git", rev = "6f13c69b65e468776141cd8a9672b597ebf1bc51" }
+# does not work
+# will fork personally later mb if needed?
+# catppuccin-egui = { git = "https://github.com/yui-915/catppuccin-egui.git", rev = "6f13c69b65e468776141cd8a9672b597ebf1bc51", features = ["egui30"], default-features = false }
 
 egui_commonmark = { version = "0.19", default-features = true, features = ["macros"] }
 image = { version = "0.25", default-features = false, features = ["png"] }

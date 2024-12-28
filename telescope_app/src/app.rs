@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use egui::Color32;
+use egui::{Color32, Id, Modal};
 use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
 use crate::{config, oobe::OOBEStep, settings};
 
@@ -182,7 +182,7 @@ impl TelescopeApp {
     pub fn catppucin_menu(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("Catppucin Themes", |ui| {
             // TODO: reorder
-            if ui.button("Mocha").clicked() {
+            /*if ui.button("Mocha").clicked() {
                 catppuccin_egui::set_theme(&ctx, catppuccin_egui::MOCHA);
             }
             if ui.button("Latte").clicked() {
@@ -193,8 +193,8 @@ impl TelescopeApp {
             }
             if ui.button("Macchiato").clicked() {
                 catppuccin_egui::set_theme(&ctx, catppuccin_egui::MACCHIATO);
-            }
-            // ui.label("Unavailable while package needs to be updated");
+            }*/
+            ui.label("Unavailable while dependency needs to be updated");
             if ui.button("Test non-catppuccin").clicked() {
                 /*ctx.style_mut(|style| {
                     
@@ -249,8 +249,10 @@ impl eframe::App for TelescopeApp {
             self.tree.ui(&mut self.app_state, ui);
             // modals
             if matches!(self.app_state.state, UiState::OOBE(_)) {
-                let modal = Modal::new(Id::new("Out of box experience setup")).show(ctx, |ui| {
-                    
+                let modal = Modal::new(Id::new("oobe_setup_modal")).show(ctx, |ui| {
+                    ui.set_width(200.0);
+                    ui.heading("Setup");
+                    ui.label("TODO: oobe setup");
                 });
             }
         });
