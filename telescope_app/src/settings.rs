@@ -26,7 +26,7 @@ pub fn resolve_user_data_directory() -> PathBuf {
         }
         return path_buf;
     }
-
+    
     current_dir
 }
 

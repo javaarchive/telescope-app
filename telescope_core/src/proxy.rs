@@ -1,21 +1,22 @@
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
 use hudsucker::{certificate_authority::RcgenAuthority, hyper::{Request, Response}, rcgen::{self, CertificateParams, KeyPair}, rustls::crypto::aws_lc_rs, tokio_tungstenite::tungstenite::Message, Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler};
+use tokio::sync::watch::Receiver;
 
 use crate::{config::{self, Config}, resource::Flow};
 
 pub struct TelescopeProxy {
     pub storage: HashMap<String, Flow>, // flow id -> flow
     pub flow_id_timeline: Vec<String>, // flow ids chronologically
-    pub config: Arc<Config>, 
+    pub config: Receiver<Config>, 
 }
 
 impl TelescopeProxy {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Receiver<Config>) -> Self {
         Self {
             storage: HashMap::new(),
             flow_id_timeline: Vec::new(),
-            config: Arc::new(config)
+            config: config
         }
     }
 
@@ -27,7 +28,7 @@ impl TelescopeProxy {
 #[derive(Clone)]
 pub struct TelescopeProxyRef {
     pub proxy: Arc<RwLock<TelescopeProxy>>,
-    pub config: Arc<Config>,
+    pub config: Receiver<Config>,
 }
 
 pub enum StartupError {
@@ -43,21 +44,17 @@ impl TelescopeProxyRef {
         }
     }
 
-    pub fn update_config(&mut self, config_arc: Arc<Config>) {
-        self.config = config_arc;
-    }
-
     pub async fn start(&self) -> Result<(), StartupError> {
         // start_panicable but actually handling errors
         // holy shit I need to learn how to not make these giant match chains
-        match KeyPair::from_pem(&self.config.ca.key_pair) {
+        match KeyPair::from_pem(&self.config.borrow().ca.key_pair) {
             Ok(key_pair) => {
-                match CertificateParams::from_ca_cert_pem(&self.config.ca.certificate) {
+                match CertificateParams::from_ca_cert_pem(&self.config.borrow().ca.certificate) {
                     Ok(ca_cert) => {
                         match ca_cert.self_signed(&key_pair) {
                             Ok(ca_cert) => {
                                 let ca = RcgenAuthority::new(key_pair, ca_cert, 1_000, aws_lc_rs::default_provider());
-                                match Proxy::builder().with_addr(self.config.addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build() {
+                                match Proxy::builder().with_addr(self.config.borrow().addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build() {
                                     Ok(proxy) => {
                                         match proxy.start().await {
                                             Ok(_) => {
@@ -82,15 +79,15 @@ impl TelescopeProxyRef {
     #[deprecated]
     pub async fn start_panicable(&self) {
         // TODO: handle bad certs and keys
-        let key_pair = KeyPair::from_pem(&self.config.ca.key_pair).expect("Failed to parse private key");
-        let ca_cert = CertificateParams::from_ca_cert_pem(&self.config.ca.certificate)
+        let key_pair = KeyPair::from_pem(&self.config.borrow().ca.key_pair).expect("Failed to parse private key");
+        let ca_cert = CertificateParams::from_ca_cert_pem(&self.config.borrow().ca.certificate)
             .expect("Failed to parse CA certificate")
             .self_signed(&key_pair)
             .expect("Failed to sign CA certificate");
     
         let ca = RcgenAuthority::new(key_pair, ca_cert, 1_000, aws_lc_rs::default_provider());
 
-        let proxy = Proxy::builder().with_addr(self.config.addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build().expect("Proxy building failed.");
+        let proxy = Proxy::builder().with_addr(self.config.borrow().addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build().expect("Proxy building failed.");
         proxy.start().await.expect("Proxy failed to start.");
     }
 }

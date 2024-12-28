@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 
 pub struct CertificateAuthority {
@@ -8,5 +8,6 @@ pub struct CertificateAuthority {
 
 pub struct Config {
     pub ca: CertificateAuthority,
-    pub addr: SocketAddr
+    pub addr: SocketAddr,
+    pub data_dir: PathBuf
 }
