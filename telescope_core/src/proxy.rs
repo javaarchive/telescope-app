@@ -47,47 +47,68 @@ impl TelescopeProxyRef {
     pub async fn start(&self) -> Result<(), StartupError> {
         // start_panicable but actually handling errors
         // holy shit I need to learn how to not make these giant match chains
-        match KeyPair::from_pem(&self.config.borrow().ca.key_pair) {
-            Ok(key_pair) => {
-                match CertificateParams::from_ca_cert_pem(&self.config.borrow().ca.certificate) {
-                    Ok(ca_cert) => {
-                        match ca_cert.self_signed(&key_pair) {
-                            Ok(ca_cert) => {
-                                let ca = RcgenAuthority::new(key_pair, ca_cert, 1_000, aws_lc_rs::default_provider());
-                                match Proxy::builder().with_addr(self.config.borrow().addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build() {
-                                    Ok(proxy) => {
-                                        match proxy.start().await {
-                                            Ok(_) => {
-                                                Ok(())
-                                            },
-                                            Err(e) => Err(StartupError::HudsuckerError(e))
-                                        }
-                                    },
-                                    Err(e) => Err(StartupError::HudsuckerError(e))
-                                }
-                            },
-                            Err(e) => Err(StartupError::RcgenError(e))
-                        }
+        // TODO: reorganize this
+        let maybe_proxy = {
+
+            let config = self.config.borrow();
+
+            match KeyPair::from_pem(&config.ca.key_pair) {
+                Ok(key_pair) => {
+                    match CertificateParams::from_ca_cert_pem(&config.ca.certificate) {
+                        Ok(ca_cert) => {
+                            match ca_cert.self_signed(&key_pair) {
+                                Ok(ca_cert) => {
+                                    let ca = RcgenAuthority::new(key_pair, ca_cert, 1_000, aws_lc_rs::default_provider());
+                                    match Proxy::builder().with_addr(config.addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build() {
+                                        Ok(proxy) => {
+                                            Ok(proxy)
+                                        },
+                                        Err(e) => Err(StartupError::HudsuckerError(e))
+                                    }
+                                },
+                                Err(e) => Err(StartupError::RcgenError(e))
+                            }
+                        },
+                        Err(e) => Err(StartupError::RcgenError(e))
+                    }
+                },
+                Err(e) => Err(StartupError::RcgenError(e))
+            }
+        };
+        match maybe_proxy {
+            Ok(proxy) => {
+                match proxy.start().await {
+                    Ok(_) => {
+                        Ok(())
                     },
-                    Err(e) => Err(StartupError::RcgenError(e))
+                    Err(e) => Err(StartupError::HudsuckerError(e))
                 }
             },
-            Err(e) => Err(StartupError::RcgenError(e))
+            Err(e) => Err(e)
         }
     }
 
     #[deprecated]
     pub async fn start_panicable(&self) {
         // TODO: handle bad certs and keys
-        let key_pair = KeyPair::from_pem(&self.config.borrow().ca.key_pair).expect("Failed to parse private key");
-        let ca_cert = CertificateParams::from_ca_cert_pem(&self.config.borrow().ca.certificate)
-            .expect("Failed to parse CA certificate")
-            .self_signed(&key_pair)
-            .expect("Failed to sign CA certificate");
-    
-        let ca = RcgenAuthority::new(key_pair, ca_cert, 1_000, aws_lc_rs::default_provider());
+        let proxy = {
+            let config = self.config.borrow();
+            let key_pair = KeyPair::from_pem(&config.ca.key_pair).expect("Failed to parse private key");
+            let ca_cert = CertificateParams::from_ca_cert_pem(&config.ca.certificate)
+                .expect("Failed to parse CA certificate")
+                .self_signed(&key_pair)
+                .expect("Failed to sign CA certificate");
+        
+            let ca = RcgenAuthority::new(key_pair, ca_cert, 1_000, aws_lc_rs::default_provider());
 
-        let proxy = Proxy::builder().with_addr(self.config.borrow().addr).with_ca(ca).with_rustls_client(aws_lc_rs::default_provider()).build().expect("Proxy building failed.");
+            Proxy::builder()
+            .with_addr(config.addr)
+            .with_ca(ca)
+            .with_rustls_client(aws_lc_rs::default_provider())
+            .build()
+            .expect("Proxy building failed.")
+        };
+
         proxy.start().await.expect("Proxy failed to start.");
     }
 }

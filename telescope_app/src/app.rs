@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use egui::{Color32, Id, Modal};
 use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
-use crate::{config, oobe::OOBEStep, settings};
+use egui_file_dialog::FileDialog;
+use telescope_core::config::Config;
+use tokio::{runtime::Runtime, sync::watch};
+use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState};
 
 #[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Hash)]
 pub enum UiState {
@@ -28,23 +31,75 @@ pub struct AppState {
     #[serde(skip)]
     pub md_cache: CommonMarkCache,
     #[serde(skip)]
-    pub cur_path: PathBuf,
+    pub staged_workspace_path: PathBuf,
+    #[serde(skip)]
+    pub config_watch: Option<(watch::Sender<Config>, watch::Receiver<Config>)>,
+    #[serde(skip)]
+    pub file_dialog: FileDialog,
+    #[serde(skip)]
+    pub dialog_ui_state: DialogUiState,
+    #[serde(skip)]
+    pub runtime: Option<Runtime>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             state: UiState::OOBE(OOBEStep::Resume),
-            cur_path: settings::resolve_user_data_directory(),
             md_cache: CommonMarkCache::default(),
+            staged_workspace_path: resolve_user_data_directory(),
+            config_watch: None,
+            file_dialog: FileDialog::new(),
+            dialog_ui_state: DialogUiState::None,
+            runtime: None
         }
     }
 }
 
 impl AppState {
+
+    pub fn get_default_runtime() -> Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("telescope-app-internal-runtime")
+            .build()
+            .expect("Internal tokio runtime could not be constructed")
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, pane: &mut PaneState) {
         // don't show anything for OOBE this is handled by a modal
+        
     }
+
+    pub fn is_server_running(&self) -> bool {
+        self.config_watch.is_some() && self.state == UiState::Proxy
+    }
+
+    pub fn accept_path(&mut self){
+        // load config
+        let config = Config::try_load_or_default(&self.staged_workspace_path);
+        self.config_watch = Some(tokio::sync::watch::channel(config));
+        if self.should_run_full_oobe() {
+            self.state = UiState::OOBE(OOBEStep::Welcome);
+        } else {
+            self.state = UiState::Proxy;
+        }
+    }
+
+    pub fn should_run_full_oobe(&self) -> bool {
+        let telescope_config_path = self.staged_workspace_path.join("telescope.toml");
+        !telescope_config_path.exists()
+    }
+    
+    pub fn get_config_send(&self) -> watch::Sender<Config> {
+        self.config_watch.as_ref().unwrap().0.clone()
+    }
+
+    pub fn get_config_recv(&self) -> watch::Receiver<Config> {
+        self.config_watch.as_ref().unwrap().1.clone()
+    }
+
+    
 }
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown
@@ -123,10 +178,10 @@ impl TelescopeApp {
         Default::default()
     }
 
-    /*pub fn render_oobe(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    pub fn render_oobe(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading(format!("{} Setup", config::BRAND));
         ui.label("Let's set up your environment!");
-        match &self.state {
+        match &self.app_state.state {
             UiState::OOBE(step) => {
                 match step {
                     OOBEStep::Resume => {
@@ -137,33 +192,47 @@ impl TelescopeApp {
                             ctx.send_viewport_cmd(viewport_cmd);
                         }
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                        self.state = UiState::OOBE(OOBEStep::Welcome);
+                        self.app_state.state = UiState::OOBE(OOBEStep::SetupPath);
                     },
                     OOBEStep::Welcome => {
                         ui.label(format!("Welcome to {}!", config::BRAND));
                         if ui.button("Next").clicked() {
-                            self.state = UiState::OOBE(OOBEStep::LicenseAgreement);
+                            self.app_state.state = UiState::OOBE(OOBEStep::LicenseAgreement);
                         }
                     },
                     OOBEStep::LicenseAgreement => {
-                        commonmark_str!(ui, &mut self.md_cache, "telescope_app/assets/LICENSE.md"); 
+                        commonmark_str!(ui, &mut self.app_state.md_cache, "telescope_app/assets/LICENSE.md"); 
                         if ui.button("Accept").clicked() {
-                            self.state = UiState::OOBE(OOBEStep::SetupPath);
+                            self.app_state.state = UiState::OOBE(OOBEStep::SetupCerts);
                         }
                     },
                     OOBEStep::SetupPath => {
-                        commonmark!(ui, &mut self.md_cache, "## Setup Data Path");
-                        ui.label(format!("Your path is currently set to: {}", self.cur_path.display()));
-                        ui.label("You may wish to change this outside of the program. For example, you can create a portable.ini file to force portable mode to store data in the current directory.");
-                        if ui.button("Exit Now").clicked() {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
+                        commonmark!(ui, &mut self.app_state.md_cache, "## Setup Data Path");
+                        ui.label("Select the location to store your data");
+                        ui.horizontal(|ui| {
+                            ui.label("Data Directory: ");
+                            // read only text field
+                            let path = self.app_state.staged_workspace_path.display().to_string();
+                            ui.label(path);
+                            if ui.button("Select").clicked() {
+                                self.app_state.dialog_ui_state = DialogUiState::ChooseWorkspacePath;
+                                self.app_state.file_dialog.pick_directory();
+                            }
+                            if ui.button("Auto").clicked() {
+                                self.app_state.staged_workspace_path = resolve_user_data_directory();
+                            }
+                        });
+
+                        ui.set_width(ui.available_width());
                         if ui.button("Continue").clicked() {
-                            self.state = UiState::OOBE(OOBEStep::SetupCerts);
+                            self.app_state.accept_path();
                         }
                     },
                     OOBEStep::SetupCerts => {
-                        commonmark!(ui, &mut self.md_cache, "## Setup Certificates\nWe'll need to generate a certificate for your browser to trust the certificate. This is a one-time step but you can repeat it anytime.");
+                        commonmark!(ui, &mut self.app_state.md_cache, "## Setup Certificates\nWe'll need to generate a certificate for your browser to trust the certificate. This is a one-time step but you can repeat it anytime.");
+                        
+
+                        
                         if ui.button("Continue").clicked() {
                             
                         }
@@ -177,7 +246,7 @@ impl TelescopeApp {
 
             }
         }
-    }*/
+    }
 
     pub fn catppucin_menu(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.menu_button("Catppucin Themes", |ui| {
@@ -246,14 +315,21 @@ impl eframe::App for TelescopeApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            self.app_state.file_dialog.update(ctx);
             self.tree.ui(&mut self.app_state, ui);
             // modals
-            if matches!(self.app_state.state, UiState::OOBE(_)) {
+            if matches!(self.app_state.state, UiState::OOBE(_)) && !matches!(self.app_state.dialog_ui_state, DialogUiState::ChooseWorkspacePath) {
                 let modal = Modal::new(Id::new("oobe_setup_modal")).show(ctx, |ui| {
                     ui.set_width(200.0);
-                    ui.heading("Setup");
-                    ui.label("TODO: oobe setup");
+                    self.render_oobe(ui, ctx);
                 });
+            }
+
+            if let DialogUiState::ChooseWorkspacePath = self.app_state.dialog_ui_state {
+                if let Some(path) = self.app_state.file_dialog.take_picked() {
+                    self.app_state.staged_workspace_path = path;
+                    self.app_state.dialog_ui_state = DialogUiState::None;
+                }
             }
         });
     }

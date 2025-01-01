@@ -33,6 +33,12 @@ egui_commonmark = { version = "0.19", default-features = true, features = ["macr
 image = { version = "0.25", default-features = false, features = ["png"] }
 egui_tiles = "0.11"
 
+# core
+telescope_core = { path = "../telescope_core" }
+egui-file-dialog = "0.8.0"
+egui_logger = "0.6.2"
+open = "5.3.1"
+
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"
