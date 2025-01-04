@@ -1,4 +1,5 @@
 pub enum DialogUiState {
     None,
-    ChooseWorkspacePath
+    ChooseWorkspacePath,
+    ChooseBindAddress(String)
 }

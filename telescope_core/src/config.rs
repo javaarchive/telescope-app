@@ -3,11 +3,13 @@ use std::{net::SocketAddr, path::PathBuf};
 use log::error;
 use serde::{Deserialize, Serialize};
 
+use crate::resource::{FileResource, Resource};
+
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct CertificateAuthority {
-    pub key_pair: String,
-    pub certificate: String
+    pub key_pair: Resource,
+    pub certificate: Resource
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -25,8 +27,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             ca: CertificateAuthority {
-                key_pair: String::from("key_pair.pem"),
-                certificate: String::from("certificate.pem")
+                key_pair: Resource::File(FileResource::new("key_pair.pem")),
+                certificate: Resource::File(FileResource::new("certificate.pem"))
+                // String::from("certificate.pem")
             },
             addr: SocketAddr::from(([127, 0, 0, 1], 8080)),
             data_dir: std::env::current_dir().unwrap(),

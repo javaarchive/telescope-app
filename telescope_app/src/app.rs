@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
 use egui::{Color32, Id, Modal};
 use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
 use egui_file_dialog::FileDialog;
-use telescope_core::config::Config;
+use telescope_core::{certs::CertDerivable, config::Config};
 use tokio::{runtime::Runtime, sync::watch};
 use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState};
 
@@ -11,6 +11,12 @@ use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory
 pub enum UiState {
     OOBE(OOBEStep),
     Proxy,
+}
+
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+pub struct AppFlags {
+    pub is_first_run: bool,
+    pub show_logs: bool
 }
 
 pub enum PaneState {
@@ -40,6 +46,10 @@ pub struct AppState {
     pub dialog_ui_state: DialogUiState,
     #[serde(skip)]
     pub runtime: Option<Runtime>,
+    #[serde(skip)]
+    pub flags: AppFlags,
+    #[serde(skip)]
+    pub proxy: Option<telescope_core::proxy::TelescopeProxyRef>,
 }
 
 impl Default for AppState {
@@ -51,13 +61,14 @@ impl Default for AppState {
             config_watch: None,
             file_dialog: FileDialog::new(),
             dialog_ui_state: DialogUiState::None,
-            runtime: None
+            runtime: None,
+            flags: AppFlags::default(),
+            proxy: None
         }
     }
 }
 
 impl AppState {
-
     pub fn get_default_runtime() -> Runtime {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -196,15 +207,19 @@ impl TelescopeApp {
                     },
                     OOBEStep::Welcome => {
                         ui.label(format!("Welcome to {}!", config::BRAND));
-                        if ui.button("Next").clicked() {
-                            self.app_state.state = UiState::OOBE(OOBEStep::LicenseAgreement);
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            if ui.button("Next").clicked() {
+                                self.app_state.state = UiState::OOBE(OOBEStep::LicenseAgreement);
+                            }
+                        });
                     },
                     OOBEStep::LicenseAgreement => {
                         commonmark_str!(ui, &mut self.app_state.md_cache, "telescope_app/assets/LICENSE.md"); 
-                        if ui.button("Accept").clicked() {
-                            self.app_state.state = UiState::OOBE(OOBEStep::SetupCerts);
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            if ui.button("Accept").clicked() {
+                                self.app_state.state = UiState::OOBE(OOBEStep::SetupCerts);
+                            }
+                        });
                     },
                     OOBEStep::SetupPath => {
                         commonmark!(ui, &mut self.app_state.md_cache, "## Setup Data Path");
@@ -224,17 +239,74 @@ impl TelescopeApp {
                         });
 
                         ui.set_width(ui.available_width());
-                        if ui.button("Continue").clicked() {
-                            self.app_state.accept_path();
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            if ui.button("Continue").clicked() {
+                                self.app_state.accept_path();
+                            }
+                        });
                     },
                     OOBEStep::SetupCerts => {
                         commonmark!(ui, &mut self.app_state.md_cache, "## Setup Certificates\nWe'll need to generate a certificate for your browser to trust the certificate. This is a one-time step but you can repeat it anytime.");
+                        if ui.button("Generate automatically").clicked() {
+                            let runtime = self.app_state.runtime.as_ref().unwrap();
+                            // TODO: make this not block ui
+                            runtime.block_on(async {
+                                self.app_state.get_config_send().send_modify(|config| { 
+                                    config.derive_cert().unwrap();
+                                });
+                            });
+                            self.app_state.state = UiState::OOBE(OOBEStep::StartProxy);
+                        }
+                    },
+                    OOBEStep::StartProxy => {
                         
+                        commonmark!(ui, &mut self.app_state.md_cache, "## Start Proxy\nYou may wish to listen on a different host and port combination than the default. You may configure this here.");
+                        let sender = self.app_state.get_config_send();
+                        let recv = self.app_state.get_config_recv();
+                        match &mut self.app_state.dialog_ui_state {
+                            DialogUiState::ChooseBindAddress(addr) => {
+                                ui.horizontal(|ui| {
+                                    sender.send_modify(|config| { 
+                                        if addr.parse::<SocketAddr>().is_ok() {
+                                            ui.label("Listen on: ");
+                                        } else {
+                                            ui.colored_label(Color32::from_rgb(255, 0, 0), "Listen on (invalid address): ");
+                                        }
+                                        ui.text_edit_singleline(addr);
+                                        if ui.button("Apply").clicked() {
+                                            match addr.parse::<SocketAddr>() {
+                                                Ok(addr) => {
+                                                    config.addr = addr;
+                                                },
+                                                Err(err) => {
+                                                    // display more detailed error
+                                                }
+                                            }
+                                        }
+                                    });
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    if ui.button("Next").clicked() {
+                                        // start the proxy for real
+                                        let runtime = self.app_state.runtime.as_ref().unwrap();
+                                        let config_recv_copy = recv.clone();
+                                        let proxy = telescope_core::proxy::TelescopeProxy::new(config_recv_copy);
+                                        let proxy_wrapper = telescope_core::proxy::TelescopeProxyRef::wrap(proxy);
+                                        let proxy_wrapper_clone = proxy_wrapper.clone();
+                                        let handle = runtime.spawn(async move {
+                                            proxy_wrapper_clone.start().await.unwrap();
+                                            // enter proxy state
+                                        });
 
-                        
-                        if ui.button("Continue").clicked() {
-                            
+                                        self.app_state.proxy = Some(proxy_wrapper);
+                                        self.app_state.state = UiState::Proxy;
+                                    }
+                                });
+                            },
+                            _ => {
+                                ui.label("Getting current address...");
+                                self.app_state.dialog_ui_state = DialogUiState::ChooseBindAddress(format!("{}", recv.borrow().addr));
+                            }
                         }
                     },
                     _ => {
@@ -284,6 +356,21 @@ impl eframe::App for TelescopeApp {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
+        // ensure OOBE is not displayed in proxy mode
+        if self.app_state.state == UiState::Proxy {
+            for tileId in self.tree.active_tiles() {
+                let mut remove = false;
+                if let Some(pane) = self.tree.tiles.get_pane(&tileId) {
+                    if matches!(pane, PaneState::OOBE) {
+                        remove = true;
+                    }
+                }
+                if remove {
+                    self.tree.remove_recursively(tileId);
+                }
+            }
+        }
+        
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
             if self.app_state.state != UiState::Proxy {
@@ -298,6 +385,9 @@ impl eframe::App for TelescopeApp {
                     egui::widgets::global_theme_preference_buttons(ui);
                     ui.add_space(16.0);
                     ui.colored_label(Color32::from_rgb(255, 0, 0), "Setup mode");
+                    if self.app_state.runtime.is_none() {
+                        ui.colored_label(Color32::from_rgb(255, 0, 0), "MISSING ASYNC RUNTIME!!!");
+                    }
                 });
             } else {
                 egui::menu::bar(ui, |ui| {
@@ -306,6 +396,12 @@ impl eframe::App for TelescopeApp {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         self.catppucin_menu(ui, ctx); // TODO: move to diff menu
+                    });
+                    ui.add_space(8.0);
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("Logs").clicked() {
+                            self.app_state.flags.show_logs = !self.app_state.flags.show_logs;
+                        }
                     });
                     ui.add_space(16.0);
                     egui::widgets::global_theme_preference_buttons(ui);
@@ -330,6 +426,14 @@ impl eframe::App for TelescopeApp {
                     self.app_state.staged_workspace_path = path;
                     self.app_state.dialog_ui_state = DialogUiState::None;
                 }
+            }
+
+
+            if self.app_state.flags.show_logs {
+                egui::Window::new("Log").show(ctx, |ui| {
+                    // draws the logger ui.
+                    egui_logger::logger_ui().show(ui);
+                });
             }
         });
     }

@@ -6,7 +6,9 @@
 fn main() -> eframe::Result {
     use telescope_app::{config, settings};
 
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    // env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    // TODO; make this into feature or cli flag?
+    egui_logger::builder().init().unwrap();
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -18,13 +20,18 @@ fn main() -> eframe::Result {
                 eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
                     .expect("Failed to load icon"),
             ),
-        persistence_path: Some(settings::resolve_user_data_directory()),
+        persistence_path: Some(settings::resolve_user_data_directory().join("telescope_state.json")),
         ..Default::default()
     };
     eframe::run_native(
         config::BRAND,
         native_options,
-        Box::new(|cc| Ok(Box::new(telescope_app::TelescopeApp::new(cc)))),
+        Box::new(|cc| {
+            let mut app = telescope_app::TelescopeApp::new(cc);
+            // setup runtime
+            app.app_state.runtime = Some(telescope_app::AppState::get_default_runtime());
+            Ok(Box::new(app))
+        }),
     )
 }
 
