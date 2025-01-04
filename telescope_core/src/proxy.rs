@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use hudsucker::{certificate_authority::RcgenAuthority, hyper::{Request, Response}, rcgen::{self, CertificateParams, KeyPair}, rustls::crypto::aws_lc_rs, tokio_tungstenite::tungstenite::Message, Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler};
+use hudsucker::{certificate_authority::RcgenAuthority, decode_request, decode_response, hyper::{Request, Response}, rcgen::{self, CertificateParams, KeyPair}, rustls::crypto::aws_lc_rs, tokio_tungstenite::tungstenite::Message, Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler};
 use tokio::sync::watch::Receiver;
 
-use crate::{config::{self, Config}, resource::{Flow, ResolveString}};
+use crate::{config::{self, Config}, resource::{Flow, FlowContent, HTTPPair, ResolveString}};
 
 // rewrite
 #[derive(Debug, Default)]
@@ -135,12 +135,14 @@ impl TelescopeProxyRef {
 #[derive(Clone)]
 pub struct TelescopeProxyHandler {
     pub proxy_ref: TelescopeProxyRef,
+    pub flow_id: Option<String>,
 }
 
 impl TelescopeProxyHandler {
     pub fn new(proxy_ref: TelescopeProxyRef) -> Self {
         Self {
-            proxy_ref
+            proxy_ref,
+            flow_id: None
         }
     }
 }
@@ -153,10 +155,23 @@ impl WebSocketHandler for TelescopeProxyHandler {
 
 impl HttpHandler for TelescopeProxyHandler {
     async fn handle_request(&mut self, _ctx: &HttpContext, req: Request<Body> ) -> RequestOrResponse {
+
+        // run plugins
+
+        let should_track = true; // TODO: discard huge bodies
+        if should_track {
+            // let flow = Flow::new(FlowContent::RequestResponse(HTTPPair { request: RequestOrResponse::Request(req.), response: None })
+        }
         req.into()
     }
 
     async fn handle_response(&mut self, _ctx: &HttpContext, res: Response<Body>) -> Response<Body> {
+
+        // run plugins
+
+        if let Some(flow_id) = &self.flow_id {
+            // we are tracking this flow
+        }
         res
     }
 }
