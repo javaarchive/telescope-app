@@ -1,16 +1,28 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::{Arc, RwLock}};
 
-use egui::{Color32, Id, Modal};
+use egui::{Color32, Id, Modal, ScrollArea};
 use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
 use egui_file_dialog::FileDialog;
+use egui_virtual_list::VirtualList;
 use telescope_core::{certs::CertDerivable, config::Config};
 use tokio::{runtime::Runtime, sync::watch};
 use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState};
 
-#[derive(serde::Deserialize, serde::Serialize, PartialEq, Eq, Hash)]
+pub struct ProxyUiState {
+    flow_vlist: VirtualList
+}
+
+impl Default for ProxyUiState {
+    fn default() -> Self {
+        Self {
+            flow_vlist: VirtualList::new()
+        }
+    }
+}
+
 pub enum UiState {
     OOBE(OOBEStep),
-    Proxy,
+    Proxy(ProxyUiState),
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -21,7 +33,8 @@ pub struct AppFlags {
 
 pub enum PaneState {
     OOBE,
-    Blank
+    Blank,
+    FlowList
 }
 
 impl Default for PaneState {
@@ -33,6 +46,7 @@ impl Default for PaneState {
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] 
 pub struct AppState {
+    #[serde(skip)]
     pub state: UiState,
     #[serde(skip)]
     pub md_cache: CommonMarkCache,
@@ -50,6 +64,8 @@ pub struct AppState {
     pub flags: AppFlags,
     #[serde(skip)]
     pub proxy: Option<telescope_core::proxy::TelescopeProxyRef>,
+    #[serde(skip)]
+    pub flow_storage: Option<Arc<RwLock<telescope_core::proxy::FlowStorage>>>,
 }
 
 impl Default for AppState {
@@ -63,7 +79,8 @@ impl Default for AppState {
             dialog_ui_state: DialogUiState::None,
             runtime: None,
             flags: AppFlags::default(),
-            proxy: None
+            proxy: None,
+            flow_storage: None
         }
     }
 }
@@ -79,11 +96,52 @@ impl AppState {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, pane: &mut PaneState) {
         // don't show anything for OOBE this is handled by a modal
-        
+        match pane {
+            PaneState::FlowList => {
+                ScrollArea::vertical().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    if let UiState::Proxy(proxy_ui_state) = &mut self.state {
+                        if let Some(flow_storage) = &self.flow_storage {
+                            let flow_storage = flow_storage.read().unwrap();
+                            if flow_storage.len() == 0 {
+                                ui.label("No flows recorded yet. Connect the proxy to see flows..");
+                            }
+                            proxy_ui_state.flow_vlist.ui_custom_layout(ui, flow_storage.len(), |ui, start_index| {
+                                let flow = flow_storage.flow_by_index(start_index).unwrap();
+                                match &flow.content {
+                                    telescope_core::resource::FlowContent::RequestResponse(httppair) => {
+                                        match &httppair.request.meta {
+                                            telescope_core::resource::RequestOrResponseMeta::Request(request_meta) => {
+                                                ui.label(format!("{} {} {}", request_meta.method, request_meta.url, request_meta.version));
+                                            },
+                                            telescope_core::resource::RequestOrResponseMeta::Response(response_meta) => panic!("resp meta in req prop"),
+                                            _ => {
+                                                panic!("not request or response???");
+                                            }
+                                        }
+                                    },
+                                    _ => {
+                                        ui.label("Flow content type not implemented.");
+                                    }
+                                }
+                                
+                                1
+                            });
+                        } else {
+                            ui.label("Flow storage not loaded");
+                        }
+                    }
+                    
+                });
+            },
+            _ => {
+
+            }
+        }
     }
 
     pub fn is_server_running(&self) -> bool {
-        self.config_watch.is_some() && self.state == UiState::Proxy
+        self.config_watch.is_some() && matches!(self.state, UiState::Proxy(_))
     }
 
     pub fn accept_path(&mut self){
@@ -93,7 +151,7 @@ impl AppState {
         if self.should_run_full_oobe() {
             self.state = UiState::OOBE(OOBEStep::Welcome);
         } else {
-            self.state = UiState::Proxy;
+            self.state = UiState::Proxy(ProxyUiState::default());
         }
     }
 
@@ -127,7 +185,8 @@ impl egui_tiles::Behavior<PaneState> for AppState {
     fn tab_title_for_pane(&mut self, pane: &PaneState) -> egui::WidgetText {
         match pane {
             PaneState::OOBE => "Out of box experience".into(),
-            PaneState::Blank => "Blank Test Pane".into()
+            PaneState::Blank => "Blank Test Pane".into(),
+            PaneState::FlowList => "Flows".into()
         }
     }
 
@@ -166,7 +225,7 @@ impl TelescopeApp {
 
         let mut tabs = vec![];
         tabs.push({
-            let cells = vec![tiles.insert_pane(PaneState::OOBE)];
+            let cells = vec![tiles.insert_pane(PaneState::FlowList), tiles.insert_pane(PaneState::OOBE)];
             tiles.insert_grid_tile(cells)
         });
         tabs.push(tiles.insert_pane(PaneState::Blank));
@@ -247,16 +306,22 @@ impl TelescopeApp {
                     },
                     OOBEStep::SetupCerts => {
                         commonmark!(ui, &mut self.app_state.md_cache, "## Setup Certificates\nWe'll need to generate a certificate for your browser to trust the certificate. This is a one-time step but you can repeat it anytime.");
-                        if ui.button("Generate automatically").clicked() {
-                            let runtime = self.app_state.runtime.as_ref().unwrap();
-                            // TODO: make this not block ui
-                            runtime.block_on(async {
-                                self.app_state.get_config_send().send_modify(|config| { 
-                                    config.derive_cert().unwrap();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            if ui.button("Skip").clicked() {
+                                self.app_state.state = UiState::OOBE(OOBEStep::StartProxy);
+                            }
+                            if ui.button("Generate automatically").clicked() {
+                                let runtime = self.app_state.runtime.as_ref().unwrap();
+                                // TODO: make this not block ui
+                                runtime.block_on(async {
+                                    self.app_state.get_config_send().send_modify(|config| { 
+                                        config.derive_cert().unwrap();
+                                    });
                                 });
-                            });
-                            self.app_state.state = UiState::OOBE(OOBEStep::StartProxy);
-                        }
+                                self.app_state.state = UiState::OOBE(OOBEStep::StartProxy);
+                            }
+                            
+                        });
                     },
                     OOBEStep::StartProxy => {
                         
@@ -292,14 +357,16 @@ impl TelescopeApp {
                                         let config_recv_copy = recv.clone();
                                         let proxy = telescope_core::proxy::TelescopeProxy::new(config_recv_copy);
                                         let proxy_wrapper = telescope_core::proxy::TelescopeProxyRef::wrap(proxy);
+                                        let flow_storage = proxy_wrapper.proxy.read().unwrap().storage.clone();
                                         let proxy_wrapper_clone = proxy_wrapper.clone();
                                         let handle = runtime.spawn(async move {
                                             proxy_wrapper_clone.start().await.unwrap();
                                             // enter proxy state
                                         });
 
+                                        self.app_state.flow_storage = Some(flow_storage);
                                         self.app_state.proxy = Some(proxy_wrapper);
-                                        self.app_state.state = UiState::Proxy;
+                                        self.app_state.state = UiState::Proxy(ProxyUiState::default());
                                     }
                                 });
                             },
@@ -357,23 +424,24 @@ impl eframe::App for TelescopeApp {
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
         // ensure OOBE is not displayed in proxy mode
-        if self.app_state.state == UiState::Proxy {
-            for tileId in self.tree.active_tiles() {
+        if matches!(self.app_state.state, UiState::Proxy(_)) {
+            for tile_id in self.tree.active_tiles() {
                 let mut remove = false;
-                if let Some(pane) = self.tree.tiles.get_pane(&tileId) {
+                if let Some(pane) = self.tree.tiles.get_pane(&tile_id) {
                     if matches!(pane, PaneState::OOBE) {
                         remove = true;
                     }
                 }
                 if remove {
-                    self.tree.remove_recursively(tileId);
+                    self.tree.remove_recursively(tile_id);
                 }
             }
         }
         
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
-            if self.app_state.state != UiState::Proxy {
+            // if self.app_state.state != UiState::Proxy {
+            if matches!(self.app_state.state, UiState::Proxy(_)) {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {

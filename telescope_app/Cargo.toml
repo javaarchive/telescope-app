@@ -38,6 +38,7 @@ telescope_core = { path = "../telescope_core" }
 egui-file-dialog = "0.8.0"
 egui_logger = "0.6.2"
 open = "5.3.1"
+egui_virtual_list = "0.6.0"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

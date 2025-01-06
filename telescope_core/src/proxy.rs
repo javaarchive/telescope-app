@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::{Arc, RwLock}};
 
-use hudsucker::{certificate_authority::RcgenAuthority, decode_request, decode_response, hyper::{Request, Response}, rcgen::{self, CertificateParams, KeyPair}, rustls::crypto::aws_lc_rs, tokio_tungstenite::tungstenite::Message, Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler};
+use hudsucker::{certificate_authority::RcgenAuthority, decode_request, decode_response, hyper::{Request, Response}, rcgen::{self, CertificateParams, KeyPair}, rustls::crypto::aws_lc_rs, tokio_tungstenite::tungstenite::{http::request, Message}, Body, HttpContext, HttpHandler, Proxy, RequestOrResponse, WebSocketContext, WebSocketHandler};
+use log::warn;
 use tokio::sync::watch::Receiver;
 
 use crate::{config::{self, Config}, resource::{Flow, FlowContent, HTTPPair, ResolveString}};
@@ -46,10 +47,18 @@ impl FlowStorage {
     pub fn iter_flow_timeline(&self) -> impl Iterator<Item=&Flow> {
         self.flow_id_timeline.iter().map(|id| self.flows.get(id).unwrap())
     }
+
+    pub fn flow_by_index(&self, index: usize) -> Option<&Flow> {
+        self.flow_id_timeline.get(index).and_then(|id| self.flows.get(id))
+    }
+
+    pub fn len(&self) -> usize {
+        self.flows.len()
+    }
 }
 
 pub struct TelescopeProxy {
-    pub storage: RwLock<FlowStorage>, // flow id -> flow
+    pub storage: Arc<RwLock<FlowStorage>>, // flow id -> flow
     pub config: Receiver<Config>, 
     // rwlock plugins
 }
@@ -57,7 +66,7 @@ pub struct TelescopeProxy {
 impl TelescopeProxy {
     pub fn new(config: Receiver<Config>) -> Self {
         Self {
-            storage: RwLock::new(FlowStorage::new()),
+            storage: Arc::new(RwLock::new(FlowStorage::new())),
             config: config
         }
     }
@@ -136,13 +145,20 @@ impl TelescopeProxyRef {
 pub struct TelescopeProxyHandler {
     pub proxy_ref: TelescopeProxyRef,
     pub flow_id: Option<String>,
+    pub flow_storage: Arc<RwLock<FlowStorage>>,
 }
 
 impl TelescopeProxyHandler {
     pub fn new(proxy_ref: TelescopeProxyRef) -> Self {
+        let flow_storage = {
+            let proxy = proxy_ref.proxy.read().unwrap();
+            proxy.storage.clone()
+        };
+
         Self {
             proxy_ref,
-            flow_id: None
+            flow_id: None,
+            flow_storage: flow_storage
         }
     }
 }
@@ -161,6 +177,13 @@ impl HttpHandler for TelescopeProxyHandler {
         let should_track = true; // TODO: discard huge bodies
         if should_track {
             // let flow = Flow::new(FlowContent::RequestResponse(HTTPPair { request: RequestOrResponse::Request(req.), response: None })
+            let (req_intermediate, duplicated_request) = crate::resource::RequestOrResponse::copy_request(req).await;
+
+            let flow = Flow::new(FlowContent::RequestResponse(HTTPPair::new_request(req_intermediate)));
+            self.flow_id = Some(flow.get_id());
+            self.flow_storage.write().unwrap().add_flow(flow);
+
+            return duplicated_request.into();
         }
         req.into()
     }
@@ -171,6 +194,18 @@ impl HttpHandler for TelescopeProxyHandler {
 
         if let Some(flow_id) = &self.flow_id {
             // we are tracking this flow
+            let (res_intermediate, duplicated_response) = crate::resource::RequestOrResponse::copy_response(res).await;
+            // record into flow
+            if let Some(flow) = self.flow_storage.write().unwrap().get_flow_mut(flow_id)  {
+                match flow.content {
+                    FlowContent::RequestResponse(ref mut http_pair) => {
+                        http_pair.add_response(res_intermediate);
+                    },
+                }
+            } else {
+                warn!("flow id {} deleted, response not recorded", flow_id);
+            }
+            return duplicated_response;
         }
         res
     }

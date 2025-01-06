@@ -27,8 +27,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             ca: CertificateAuthority {
-                key_pair: Resource::File(FileResource::new("key_pair.pem")),
-                certificate: Resource::File(FileResource::new("certificate.pem"))
+                key_pair: Resource::File(FileResource::new("key.pem")),
+                certificate: Resource::File(FileResource::new("cert.pem"))
                 // String::from("certificate.pem")
             },
             addr: SocketAddr::from(([127, 0, 0, 1], 8080)),
