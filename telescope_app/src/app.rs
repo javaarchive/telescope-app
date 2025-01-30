@@ -3,19 +3,19 @@ use std::{net::SocketAddr, path::PathBuf, sync::{Arc, RwLock}};
 use egui::{Color32, Id, Modal, ScrollArea};
 use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
 use egui_file_dialog::FileDialog;
-use egui_virtual_list::VirtualList;
+use egui_taffy::{taffy::Style, tui};
+use egui_taffy::taffy::prelude::*;
 use telescope_core::{certs::CertDerivable, config::Config};
 use tokio::{runtime::Runtime, sync::watch};
 use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState};
 
 pub struct ProxyUiState {
-    flow_vlist: VirtualList
 }
 
 impl Default for ProxyUiState {
     fn default() -> Self {
         Self {
-            flow_vlist: VirtualList::new()
+
         }
     }
 }
@@ -106,7 +106,7 @@ impl AppState {
                             if flow_storage.len() == 0 {
                                 ui.label("No flows recorded yet. Connect the proxy to see flows..");
                             }
-                            proxy_ui_state.flow_vlist.ui_custom_layout(ui, flow_storage.len(), |ui, start_index| {
+                            /*proxy_ui_state.flow_vlist.ui_custom_layout(ui, flow_storage.len(), |ui, start_index| {
                                 let flow = flow_storage.flow_by_index(start_index).unwrap();
                                 match &flow.content {
                                     telescope_core::resource::FlowContent::RequestResponse(httppair) => {
@@ -126,7 +126,20 @@ impl AppState {
                                 }
                                 
                                 1
-                            });
+                            });*/
+                            // https://github.com/PPakalns/egui_taffy/blob/main/examples/demo.rs#L193
+                            tui(ui, "flow_storage")
+                                .reserve_available_space()
+                                .style(Style {
+                                    display: egui_taffy::taffy::Display::Grid,
+                                    grid_template_columns: vec![fr(4.), fr(1.), fr(2.)],
+                                    gap: length(8.),
+                                    size: percent(1.),
+                                    align_items: Some(egui_taffy::taffy::AlignItems::Stretch),
+                                    justify_items: Some(egui_taffy::taffy::AlignItems::Stretch),
+
+                                    ..Default::default()
+                                })
                         } else {
                             ui.label("Flow storage not loaded");
                         }
@@ -351,7 +364,7 @@ impl TelescopeApp {
                                     });
                                 });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                                    if ui.button("Next").clicked() {
+                                    if ui.button("Go").clicked() {
                                         // start the proxy for real
                                         let runtime = self.app_state.runtime.as_ref().unwrap();
                                         let config_recv_copy = recv.clone();
@@ -367,6 +380,7 @@ impl TelescopeApp {
                                         self.app_state.flow_storage = Some(flow_storage);
                                         self.app_state.proxy = Some(proxy_wrapper);
                                         self.app_state.state = UiState::Proxy(ProxyUiState::default());
+                                        ctx.request_repaint();
                                     }
                                 });
                             },
@@ -441,7 +455,7 @@ impl eframe::App for TelescopeApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
             // if self.app_state.state != UiState::Proxy {
-            if matches!(self.app_state.state, UiState::Proxy(_)) {
+            if !matches!(self.app_state.state, UiState::Proxy(_)) {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
