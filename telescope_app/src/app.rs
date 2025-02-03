@@ -1,11 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf, sync::{Arc, RwLock}};
 
-use egui::{Color32, Id, Modal, ScrollArea};
+use egui::{Color32, Id, Modal, Rect, ScrollArea};
 use egui_commonmark::{commonmark, commonmark_str, CommonMarkCache};
 use egui_file_dialog::FileDialog;
-use egui_taffy::{taffy::Style, tui};
+use egui_taffy::{taffy::Style, tui, virtual_tui::{VirtualGridRowHelper, VirtualGridRowHelperParams}, Tui, TuiBuilderLogic};
 use egui_taffy::taffy::prelude::*;
-use telescope_core::{certs::CertDerivable, config::Config};
+use serde::{Deserialize, Serialize};
+use telescope_core::{certs::CertDerivable, config::Config, resource::{Flow, FlowContent, RequestMeta}};
 use tokio::{runtime::Runtime, sync::watch};
 use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState};
 
@@ -68,6 +69,27 @@ pub struct AppState {
     pub flow_storage: Option<Arc<RwLock<telescope_core::proxy::FlowStorage>>>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub enum FlowDetail {
+    URL,
+    Method,
+    Path,
+    Host
+}
+
+impl FlowDetail {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FlowDetail::URL => "URL",
+            FlowDetail::Method => "Method",
+            FlowDetail::Path => "Path",
+            FlowDetail::Host => "Host"
+        }
+    }
+}
+
+pub const FLOW_DETAILS_ORDER_DEFAULT: [FlowDetail; 3] = [FlowDetail::Path, FlowDetail::Method, FlowDetail::Host];
+
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -94,58 +116,135 @@ impl AppState {
             .expect("Internal tokio runtime could not be constructed")
     }
 
+    pub fn ui_for_grid(&self, tui: &mut Tui, flow_detail: &FlowDetail, flow: &Flow) {
+        if let FlowContent::RequestResponse(httppair) = &flow.content {
+            let meta = &httppair.request.meta;
+            let request: &RequestMeta = meta.unwrap_request_ref();
+            match flow_detail {
+                FlowDetail::URL => {
+                    tui.label(request.url.as_str());
+                },
+                FlowDetail::Method => {
+                    tui.label(request.method.as_str());
+                },
+                FlowDetail::Path => {
+                    tui.label(request.url.path());
+                },
+                FlowDetail::Host => {
+                    tui.label(request.url.host_str().unwrap_or("undefined"));
+                },
+                _ => {
+                    tui.label("prop not implemented");
+                }
+            }
+        }else{
+            // futureproofing
+            tui.label("NA");
+        }
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, pane: &mut PaneState) {
         // don't show anything for OOBE this is handled by a modal
         match pane {
             PaneState::FlowList => {
-                ScrollArea::vertical().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    if let UiState::Proxy(proxy_ui_state) = &mut self.state {
-                        if let Some(flow_storage) = &self.flow_storage {
-                            let flow_storage = flow_storage.read().unwrap();
-                            if flow_storage.len() == 0 {
-                                ui.label("No flows recorded yet. Connect the proxy to see flows..");
-                            }
-                            /*proxy_ui_state.flow_vlist.ui_custom_layout(ui, flow_storage.len(), |ui, start_index| {
-                                let flow = flow_storage.flow_by_index(start_index).unwrap();
-                                match &flow.content {
-                                    telescope_core::resource::FlowContent::RequestResponse(httppair) => {
-                                        match &httppair.request.meta {
-                                            telescope_core::resource::RequestOrResponseMeta::Request(request_meta) => {
-                                                ui.label(format!("{} {} {}", request_meta.method, request_meta.url, request_meta.version));
-                                            },
-                                            telescope_core::resource::RequestOrResponseMeta::Response(response_meta) => panic!("resp meta in req prop"),
-                                            _ => {
-                                                panic!("not request or response???");
-                                            }
+                // ui.label(format!("avali width: {}", ui.available_width()));
+                ui.set_width(ui.available_width());
+                if let UiState::Proxy(proxy_ui_state) = &mut self.state {
+                    if let Some(flow_storage) = &self.flow_storage {
+                        let flow_storage = flow_storage.read().unwrap();
+                        /*if flow_storage.len() == 0 {
+                            ui.label("No flows recorded yet. Connect the proxy to see flows..");
+                        }*/
+                        /*proxy_ui_state.flow_vlist.ui_custom_layout(ui, flow_storage.len(), |ui, start_index| {
+                            let flow = flow_storage.flow_by_index(start_index).unwrap();
+                            match &flow.content {
+                                telescope_core::resource::FlowContent::RequestResponse(httppair) => {
+                                    match &httppair.request.meta {
+                                        telescope_core::resource::RequestOrResponseMeta::Request(request_meta) => {
+                                            ui.label(format!("{} {} {}", request_meta.method, request_meta.url, request_meta.version));
+                                        },
+                                        telescope_core::resource::RequestOrResponseMeta::Response(response_meta) => panic!("resp meta in req prop"),
+                                        _ => {
+                                            panic!("not request or response???");
                                         }
-                                    },
-                                    _ => {
-                                        ui.label("Flow content type not implemented.");
                                     }
+                                },
+                                _ => {
+                                    ui.label("Flow content type not implemented.");
                                 }
-                                
-                                1
-                            });*/
-                            // https://github.com/PPakalns/egui_taffy/blob/main/examples/demo.rs#L193
-                            tui(ui, "flow_storage")
-                                .reserve_available_space()
-                                .style(Style {
+                            }
+                            
+                            1
+                        });*/
+                        // https://github.com/PPakalns/egui_taffy/blob/main/examples/demo.rs#L193
+                        // virtual_grid used from there
+                        tui(ui, ui.id().with("flow_storage"))
+                            .reserve_available_space()
+                            .style(Style {
+                                display: egui_taffy::taffy::Display::Flex,
+                                flex_direction: egui_taffy::taffy::FlexDirection::Column,
+                                size: percent(1.),
+                                max_size: percent(1.),
+                                ..Default::default()
+                            })
+                            .show(|tui| {
+                                // println!("rect: {}", tui.root_rect());
+                                tui.style(Style {
                                     display: egui_taffy::taffy::Display::Grid,
                                     grid_template_columns: vec![fr(4.), fr(1.), fr(2.)],
-                                    gap: length(8.),
-                                    size: percent(1.),
-                                    align_items: Some(egui_taffy::taffy::AlignItems::Stretch),
-                                    justify_items: Some(egui_taffy::taffy::AlignItems::Stretch),
-
+                                    // gap: length(8.),
+                                    overflow: egui_taffy::taffy::Point {
+                                        x: egui_taffy::taffy::Overflow::Visible,
+                                        y: egui_taffy::taffy::Overflow::Scroll,
+                                    },
+                                    size: egui_taffy::taffy::Size {
+                                        width:  percent(1.),
+                                        height: auto(),
+                                    },
+                                    max_size: percent(1.),
+                                    grid_auto_rows: vec![min_content()],
                                     ..Default::default()
+                                }).wrap_mode(egui::TextWrapMode::Extend).add(|tui| {
+                                    VirtualGridRowHelper::show(VirtualGridRowHelperParams {
+                                        header_row_count: 1,
+                                        row_count: flow_storage.len(),
+                                    }, tui, |tui, info| {
+                                        let mut idgen = info.id_gen();
+                                        let mut_grid_row_param = info.grid_row_setter();
+                                        let flow = flow_storage.flow_by_index(info.idx).unwrap();
+                                        for flow_detail in FLOW_DETAILS_ORDER_DEFAULT.iter() {
+                                            let _ = tui
+                                                .id(idgen())
+                                                .mut_style(&mut_grid_row_param)
+                                                .mut_style(|style| {
+                                                    style.padding = length(2.);
+                                                })
+                                                .button(|tui| {
+                                                    self.ui_for_grid(tui, flow_detail, flow);
+                                                });
+                                        }
+                                        
+                                    });
+                                        // draw header
+                                    for idx in 0..FLOW_DETAILS_ORDER_DEFAULT.len() {
+                                        let flow_detail = &FLOW_DETAILS_ORDER_DEFAULT[idx];
+                                        tui.sticky([false, true].into())
+                                            .style(egui_taffy::taffy::Style {
+                                                grid_row: egui_taffy::taffy::style_helpers::line(1 as i16),
+                                                padding: length(4.),
+                                                ..Default::default()
+                                            })
+                                            .id(egui_taffy::tid(("header", 1, idx)))
+                                            .add_with_background_color(|tui| {
+                                                tui.label(flow_detail.as_str());
+                                            });
+                                    }
                                 })
-                        } else {
-                            ui.label("Flow storage not loaded");
-                        }
+                            })
+                    } else {
+                        ui.label("Flow storage not loaded");
                     }
-                    
-                });
+                }
             },
             _ => {
 
@@ -434,8 +533,9 @@ impl eframe::App for TelescopeApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
+        ctx.options_mut(|options| {
+            options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+        });
 
         // ensure OOBE is not displayed in proxy mode
         if matches!(self.app_state.state, UiState::Proxy(_)) {

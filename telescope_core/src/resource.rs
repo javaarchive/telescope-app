@@ -4,7 +4,7 @@ use http_body_util::{BodyExt, BodyStream, Collected};
 use hudsucker::{rustls::version, tokio_tungstenite::tungstenite::http::request};
 use hyper::HeaderMap;
 use log::warn;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize, Serializer};
 
 use crate::config::Config;
 
@@ -97,11 +97,45 @@ impl ResolveString for Config {
     }
 }
 
+// https://stackoverflow.com/questions/39383809/how-to-transform-fields-during-serialization-using-serde
+fn url_serialize<S>(url: &reqwest::Url, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let url_str = url.as_str();
+    s.serialize_str(url_str)
+}
+
+// https://users.rust-lang.org/t/need-help-with-serde-deserialize-with/18374/3
+fn deserialize_json_string<'de, D>(deserializer: D) -> Result<reqwest::Url, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let url_str: &str = de::Deserialize::deserialize(deserializer)?;
+    reqwest::Url::parse(url_str).map_err(de::Error::custom)
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestMeta {
-    pub url: String,
+    #[serde(serialize_with = "url_serialize", deserialize_with = "deserialize_json_string")]
+    pub url: reqwest::Url,
     pub method: String,
     pub version: String,
+}
+
+impl RequestMeta {
+    pub fn new(url: &str, method: &str, version: &str) -> Self {
+        Self {
+            url: reqwest::Url::parse(url).unwrap(), // TODO: error handling
+            method: String::from(method),
+            version: String::from(version)
+        }
+    }
+
+    pub fn url_str(&self) -> &str {
+        self.url.as_str()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,10 +144,52 @@ pub struct ResponseMeta {
     pub version: String,
 }
 
+    pub fn new(status: u32, version: &str) -> Self {
+        Self {
+            status,
+            version: String::from(version)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RequestOrResponseMeta {
     Request(RequestMeta),
     Response(ResponseMeta)
+}
+
+impl RequestOrResponseMeta {
+    pub fn unwrap_request_ref(&self) -> &RequestMeta {
+        match self {
+            RequestOrResponseMeta::Request(request_meta) => request_meta,
+            RequestOrResponseMeta::Response(response_meta) => panic!("ResponseMeta cannot be unwrapped as RequestMeta")
+        }
+    }
+
+    pub fn unwrap_response_ref(&self) -> &ResponseMeta {
+        match self {
+            RequestOrResponseMeta::Request(request_meta) => panic!("RequestMeta cannot be unwrapped as ResponseMeta"),
+            RequestOrResponseMeta::Response(response_meta) => response_meta
+        }
+    }
+}
+
+impl Into<RequestMeta> for RequestOrResponseMeta {
+    fn into(self) -> RequestMeta {
+        match self {
+            RequestOrResponseMeta::Request(request_meta) => request_meta,
+            RequestOrResponseMeta::Response(response_meta) => panic!("ResponseMeta cannot be converted to RequestMeta")
+        }
+    }
+}
+
+impl Into<ResponseMeta> for RequestOrResponseMeta {
+    fn into(self) -> ResponseMeta {
+        match self {
+            RequestOrResponseMeta::Request(request_meta) => panic!("RequestMeta cannot be converted to ResponseMeta"),
+            RequestOrResponseMeta::Response(response_meta) => response_meta
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +200,7 @@ pub struct RequestOrResponse {
     pub meta: RequestOrResponseMeta
     // pub reply: Option<Box<RequestOrResponse>>
 }
+
 
 impl RequestOrResponse {
     pub fn new_request(body: Resource, headers: HeaderMap, meta: RequestMeta) -> Self {
@@ -186,7 +263,7 @@ impl RequestOrResponse {
         let body_cloned: hudsucker::Body = hudsucker::Body::from(http_body_util::Full::new(body_bytes.clone()));
 
         let duplicated_request = hyper::Request::from_parts(parts, body_cloned);
-        let request_to_save = RequestOrResponse::new_request(Resource::Memory(MemoryResource::new(body_bytes.to_vec())), headers, RequestMeta { url, method, version: version_str });
+        let request_to_save = RequestOrResponse::new_request(Resource::Memory(MemoryResource::new(body_bytes.to_vec())), headers, RequestMeta::new(&url, &method, &version_str));
 
         (request_to_save, duplicated_request)
     }
@@ -201,7 +278,7 @@ impl RequestOrResponse {
         let headers = parts.headers.clone();
 
         let duplicated_response = hyper::Response::from_parts(parts, body_cloned);
-        let response_to_save = RequestOrResponse::new_response(Resource::Memory(MemoryResource::new(body_bytes.to_vec())), headers, ResponseMeta { status: status, version: version_str });
+        let response_to_save = RequestOrResponse::new_response(Resource::Memory(MemoryResource::new(body_bytes.to_vec())), headers, ResponseMeta::new(status, &version_str));
 
         (response_to_save, duplicated_response)
     }
