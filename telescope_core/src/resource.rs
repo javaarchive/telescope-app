@@ -144,6 +144,7 @@ pub struct ResponseMeta {
     pub version: String,
 }
 
+impl ResponseMeta {
     pub fn new(status: u32, version: &str) -> Self {
         Self {
             status,
