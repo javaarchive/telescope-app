@@ -136,6 +136,10 @@ impl RequestMeta {
     pub fn url_str(&self) -> &str {
         self.url.as_str()
     }
+
+    pub fn is_proxy_client_connection(&self) -> bool {
+        self.method == "CONNECT"
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

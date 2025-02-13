@@ -8,7 +8,7 @@ use egui_taffy::taffy::prelude::*;
 use serde::{Deserialize, Serialize};
 use telescope_core::{certs::CertDerivable, config::Config, resource::{Flow, FlowContent, RequestMeta}};
 use tokio::{runtime::Runtime, sync::watch};
-use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState};
+use crate::{config, oobe::OOBEStep, settings::{self, resolve_user_data_directory}, states::DialogUiState, utils::color_for_status};
 
 pub struct ProxyUiState {
 }
@@ -74,7 +74,8 @@ pub enum FlowDetail {
     URL,
     Method,
     Path,
-    Host
+    Host,
+    StatusCode,
 }
 
 impl FlowDetail {
@@ -83,12 +84,13 @@ impl FlowDetail {
             FlowDetail::URL => "URL",
             FlowDetail::Method => "Method",
             FlowDetail::Path => "Path",
-            FlowDetail::Host => "Host"
+            FlowDetail::Host => "Host",
+            FlowDetail::StatusCode => "Status Code",
         }
     }
 }
 
-pub const FLOW_DETAILS_ORDER_DEFAULT: [FlowDetail; 3] = [FlowDetail::Path, FlowDetail::Method, FlowDetail::Host];
+pub const FLOW_DETAILS_ORDER_DEFAULT: [FlowDetail; 4] = [FlowDetail::Path, FlowDetail::Method, FlowDetail::Host, FlowDetail::StatusCode];
 
 impl Default for AppState {
     fn default() -> Self {
@@ -117,26 +119,71 @@ impl AppState {
     }
 
     pub fn ui_for_grid(&self, tui: &mut Tui, flow_detail: &FlowDetail, flow: &Flow) {
+
+        let mut not_applicable = |tui: &mut Tui| -> egui::Response {
+            tui.colored_label(Color32::from_rgb(100, 100, 100), "NA")
+        };
+
+        let mut respond_pending = |tui: &mut Tui| -> egui::Response {
+            tui.colored_label(Color32::from_rgb(100, 100, 100), "Pending...")
+        };
+
         if let FlowContent::RequestResponse(httppair) = &flow.content {
             let meta = &httppair.request.meta;
             let request: &RequestMeta = meta.unwrap_request_ref();
-            match flow_detail {
+            let is_proxy_internal = request.is_proxy_client_connection();
+            let label_resp = match flow_detail {
                 FlowDetail::URL => {
-                    tui.label(request.url.as_str());
+                    tui.label(request.url.as_str(), )
                 },
                 FlowDetail::Method => {
-                    tui.label(request.method.as_str());
+                    tui.label(request.method.as_str())
                 },
                 FlowDetail::Path => {
-                    tui.label(request.url.path());
+                    tui.label(request.url.path())
                 },
                 FlowDetail::Host => {
-                    tui.label(request.url.host_str().unwrap_or("undefined"));
+                    if is_proxy_internal {
+                        not_applicable(tui)
+                    } else {
+                        tui.label(request.url.host_str().unwrap_or("undefined"))
+                    }
                 },
                 _ => {
-                    tui.label("prop not implemented");
+                    if let Some(response) = &httppair.response {
+                        match flow_detail {
+                            FlowDetail::StatusCode => {
+                                let resp_meta = response.meta.unwrap_response_ref();
+                                match flow_detail {
+                                    FlowDetail::StatusCode => {
+                                        tui.colored_label(color_for_status(resp_meta.status), format!("{}", resp_meta.status))
+                                    },
+                                    _ => {
+                                        not_applicable(tui)
+                                    }
+                                }
+                            },
+                            _ => {
+                                not_applicable(tui)
+                            }
+                        }
+                    } else {
+                        if !is_proxy_internal {
+                            match flow_detail {
+                                FlowDetail::StatusCode => {
+                                    respond_pending(tui)
+                                },
+                                _ => {
+                                    not_applicable(tui)
+                                }
+                            }
+                        } else {
+                            // for now
+                            not_applicable(tui)
+                        }
+                    }
                 }
-            }
+            };
         }else{
             // futureproofing
             tui.label("NA");
@@ -191,7 +238,7 @@ impl AppState {
                                 // println!("rect: {}", tui.root_rect());
                                 tui.style(Style {
                                     display: egui_taffy::taffy::Display::Grid,
-                                    grid_template_columns: vec![fr(4.), fr(1.), fr(2.)],
+                                    grid_template_columns: vec![fr(4.), fr(1.), fr(2.), fr(0.5)], // update this when you change the cols
                                     // gap: length(8.),
                                     overflow: egui_taffy::taffy::Point {
                                         x: egui_taffy::taffy::Overflow::Clip,
@@ -234,7 +281,7 @@ impl AppState {
                                         }
                                         
                                     });
-                                        // draw header
+                                    // draw header
                                     for idx in 0..FLOW_DETAILS_ORDER_DEFAULT.len() {
                                         let flow_detail = &FLOW_DETAILS_ORDER_DEFAULT[idx];
                                         tui.sticky([false, true].into())
