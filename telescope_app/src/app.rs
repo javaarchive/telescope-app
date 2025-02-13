@@ -194,7 +194,7 @@ impl AppState {
                                     grid_template_columns: vec![fr(4.), fr(1.), fr(2.)],
                                     // gap: length(8.),
                                     overflow: egui_taffy::taffy::Point {
-                                        x: egui_taffy::taffy::Overflow::Visible,
+                                        x: egui_taffy::taffy::Overflow::Clip,
                                         y: egui_taffy::taffy::Overflow::Scroll,
                                     },
                                     size: egui_taffy::taffy::Size {
@@ -204,7 +204,7 @@ impl AppState {
                                     max_size: percent(1.),
                                     grid_auto_rows: vec![min_content()],
                                     ..Default::default()
-                                }).wrap_mode(egui::TextWrapMode::Extend).add(|tui| {
+                                }).add_with_border(|tui| {
                                     VirtualGridRowHelper::show(VirtualGridRowHelperParams {
                                         header_row_count: 1,
                                         row_count: flow_storage.len(),
@@ -215,9 +215,18 @@ impl AppState {
                                         for flow_detail in FLOW_DETAILS_ORDER_DEFAULT.iter() {
                                             let _ = tui
                                                 .id(idgen())
+                                                .wrap_mode(egui::TextWrapMode::Truncate)
                                                 .mut_style(&mut_grid_row_param)
                                                 .mut_style(|style| {
-                                                    style.padding = length(2.);
+                                                    // style.padding = length(2.);
+                                                    // style.max_size = percent(1.);
+                                                    // style.size = percent(1.);
+                                                    // style.min_size = percent(1.);
+                                                    style.display = egui_taffy::taffy::Display::Block;
+                                                    /*style.overflow = egui_taffy::taffy::Point {
+                                                        x: egui_taffy::taffy::Overflow::Clip,
+                                                        y: egui_taffy::taffy::Overflow::Scroll,
+                                                    };*/
                                                 })
                                                 .button(|tui| {
                                                     self.ui_for_grid(tui, flow_detail, flow);
@@ -232,6 +241,7 @@ impl AppState {
                                             .style(egui_taffy::taffy::Style {
                                                 grid_row: egui_taffy::taffy::style_helpers::line(1 as i16),
                                                 padding: length(4.),
+                                                display: egui_taffy::taffy::Display::Block,
                                                 ..Default::default()
                                             })
                                             .id(egui_taffy::tid(("header", 1, idx)))
@@ -523,6 +533,29 @@ impl TelescopeApp {
             }
         });
     }
+
+    pub fn debug_menu(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.menu_button("Debug Tools", |ui| {
+            ui.label("Use these to debug the app.");
+            if ui.button("Toggle hover debug").clicked() {
+                ctx.style_mut(|style| {
+                    style.debug.debug_on_hover = !style.debug.debug_on_hover;
+                });
+            }
+            if ui.button("Show expansion causes").clicked() {
+                ctx.style_mut(|style| {
+                    style.debug.show_expand_width = true;
+                    style.debug.show_expand_height = true;
+                });
+            }
+            if ui.button("Hide expansion causes").clicked() {
+                ctx.style_mut(|style| {
+                    style.debug.show_expand_width = false;
+                    style.debug.show_expand_height = false;
+                });
+            }
+        });
+    }
 }
 
 impl eframe::App for TelescopeApp {
@@ -561,6 +594,7 @@ impl eframe::App for TelescopeApp {
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
+                        self.debug_menu(ui, ctx);
                         self.catppucin_menu(ui, ctx); // TODO: move to diff menu
                     });
                     ui.add_space(16.0);
@@ -577,6 +611,7 @@ impl eframe::App for TelescopeApp {
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
+                        self.debug_menu(ui, ctx);
                         self.catppucin_menu(ui, ctx); // TODO: move to diff menu
                     });
                     ui.add_space(8.0);
