@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{io::Cursor, time::{Instant, SystemTime, UNIX_EPOCH}};
 
 use http_body_util::{BodyExt, BodyStream, Collected};
 use hudsucker::{rustls::version, tokio_tungstenite::tungstenite::http::request};
@@ -115,6 +115,10 @@ where
     reqwest::Url::parse(url_str).map_err(de::Error::custom)
 }
 
+pub fn get_current_time() -> u128 {
+    // TODO: fix non-monotonic func use?
+    SystemTime::now().duration_since(UNIX_EPOCH).expect("time keeping failure").as_millis()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestMeta {
@@ -122,6 +126,7 @@ pub struct RequestMeta {
     pub url: reqwest::Url,
     pub method: String,
     pub version: String,
+    pub created_at: u128,
 }
 
 impl RequestMeta {
@@ -129,7 +134,8 @@ impl RequestMeta {
         Self {
             url: reqwest::Url::parse(url).unwrap(), // TODO: error handling
             method: String::from(method),
-            version: String::from(version)
+            version: String::from(version),
+            created_at: get_current_time()
         }
     }
 
@@ -146,13 +152,15 @@ impl RequestMeta {
 pub struct ResponseMeta {
     pub status: u32,
     pub version: String,
+    pub created_at: u128
 }
 
 impl ResponseMeta {
     pub fn new(status: u32, version: &str) -> Self {
         Self {
             status,
-            version: String::from(version)
+            version: String::from(version),
+            created_at: get_current_time()
         }
     }
 }
@@ -310,6 +318,14 @@ impl HTTPPair {
 
     pub fn add_response(&mut self, response: RequestOrResponse) {
         self.response = Some(response);
+    }
+
+    pub fn get_time_taken(&self) -> Option<u128> {
+        if let Some(response) = &self.response {
+            Some(response.meta.unwrap_response_ref().created_at - self.request.meta.unwrap_request_ref().created_at)
+        } else {
+            None
+        }
     }
 }
 
